@@ -1,10 +1,11 @@
 # dice3d-shared
 
 Motor de dados 3D (DiceBox/Three.js) compartido entre `portal-bostezante` y
-`vtt-942`. No es un paquete de npm ni vive en un monorepo con workspaces —
-es una carpeta hermana (`D:\Programacion\Desarrollo\dice3d-shared`) que cada
-proyecto importa directamente vía un path alias de TypeScript, sin pasar
-por `node_modules`.
+`vtt-942`. Es su propio repo git (`https://github.com/jEyharchet/dice3d-shared`,
+privado), consumido por ambos proyectos como **dependencia git de npm**
+(`node_modules/dice3d-shared`) — no un paquete publicado en el registro de
+npm, ni una carpeta hermana fuera del repo (ver "Historia" más abajo para
+el enfoque anterior y por qué se abandonó).
 
 ## Qué expone
 
@@ -21,71 +22,69 @@ por `node_modules`.
   la tirada respetando las preferencias del usuario (color, sonido, modo de
   visualización, duración, reduced motion) y llama `onDone()` al terminar.
 
-## Cómo consumirlo desde una app Next.js (sin `file:`, sin workspaces)
+## Cómo consumirlo desde una app Next.js
 
-Se probaron dos enfoques más "estándar" (dependencia `file:../dice3d-shared`
-+ `transpilePackages`, y esa misma dependencia con `package.json#exports`)
-y **ninguno resolvió con Turbopack** (Next 16): Turbopack sandboxea la
-resolución de módulos a la raíz del proyecto, y no sigue una dependencia
-`file:` hacia una carpeta hermana aunque `node_modules` tenga la junction
-correcta. Lo que sí funciona:
-
-1. En `tsconfig.json` de la app, agregar el path alias:
+1. En `package.json` de la app, agregar la dependencia git (el repo es
+   privado — hace falta que `npm install`/Vercel tengan acceso, ver
+   "Acceso privado" más abajo):
    ```json
-   "paths": {
-     "@/*": ["./src/*"],
-     "dice3d-shared/*": ["../dice3d-shared/*"]
+   "dependencies": {
+     "dice3d-shared": "github:jEyharchet/dice3d-shared#master"
    }
    ```
-2. En `next.config.ts`, subir la raíz que Turbopack puede resolver al
-   directorio padre común (el que contiene ambos proyectos):
+2. En `next.config.ts`, agregar `transpilePackages` — el paquete se
+   distribuye como fuente TS/TSX sin compilar, y Next por default no corre
+   sus loaders sobre `node_modules/`:
    ```ts
-   import path from "node:path";
    const nextConfig: NextConfig = {
-     turbopack: { root: path.join(__dirname, "..") },
+     transpilePackages: ["dice3d-shared"],
    };
    ```
-   Sin esto, Turbopack tira `Module not found: Can't resolve 'dice3d-shared/...'`
-   aunque el alias de tsconfig esté bien puesto — `root` es el límite real.
 3. **Copiar los assets estáticos** de `assets/` a `public/assets/` de la
    app (Next.js sirve `public/` sólo desde la raíz de cada proyecto, no
-   puede apuntar fuera de él):
+   puede apuntar a `node_modules/`):
    - `dice-box-threejs-jt-e0v5v.js` (el motor DiceBox, ~550KB)
    - `dice_roll.mp3` (sonido de tirada)
 
-No hace falta ninguna entrada en `package.json` de la app consumidora — no
-es una dependencia de npm, es código fuente que cada app compila directo
-como si fuera propio (gracias al alias). Si el motor DiceBox se actualiza
-alguna vez, la copia maestra vive acá — hay que volver a copiar el asset
-estático a cada app que lo consume (el código TS/TSX no necesita copiarse,
-se importa en vivo).
+Los imports no cambian (`import ... from "dice3d-shared/dicePresets"` sigue
+funcionando igual — antes resolvía vía path alias a la carpeta hermana,
+ahora resuelve a `node_modules/dice3d-shared/` como cualquier paquete
+normal). Si el motor DiceBox se actualiza, hay que volver a copiar el
+asset estático a cada app que lo consume después de actualizar la versión
+fijada (el código TS/TSX se trae solo con `npm install`).
 
-### `react`/`react-dom`: por qué este paquete SÍ tiene su propio `node_modules`
+### Acceso privado (Vercel / CI)
 
-`DiceRollOverlay.tsx` importa `react`. Como este paquete vive fuera de
-cualquier proyecto Next.js, `tsc` no encuentra tipos para `react` al
-resolver ese archivo (camina hacia arriba desde acá, no hacia las apps que
-lo consumen) — por eso este paquete corrió su propio `npm install` con
-`react`/`@types/react` como devDependency, sólo para que el type-check
-funcione. **Ojo con esto en runtime**: si una app consumidora no fuerza
-explícitamente su propia copia de `react`, Turbopack podría resolver la
-copia de ESTE paquete al empaquetar `DiceRollOverlay`, dando dos instancias
-de React (`Invalid hook call`). Por eso cada `next.config.ts` consumidor
-tiene que declarar:
+Como el repo es privado, `npm install` necesita un token con permiso
+`repo` para clonarlo — en Vercel, configurar un `.npmrc` con el token vía
+env var de build (`NPM_TOKEN` o similar) en **cada proyecto consumidor**
+(`portal-bostezante` y `vtt-942`).
 
-```ts
-turbopack: {
-  root: path.join(__dirname, ".."),
-  resolveAlias: {
-    react: "./node_modules/react",
-    "react-dom": "./node_modules/react-dom",
-  },
-},
-```
+### `react`/`react-dom`: por qué este paquete tiene su propio `node_modules` local
 
-(Rutas absolutas de Windows en `resolveAlias` no funcionan todavía en
-Turbopack — "windows imports are not implemented yet" — por eso son rutas
-relativas `./node_modules/...`, no `path.join(__dirname, ...)`.)
+`DiceRollOverlay.tsx` importa `react`. Este repo tiene su propio
+`node_modules` con `react`/`@types/react` como devDependency, sólo para que
+`tsc` resuelva tipos al desarrollar acá mismo — **no se publica** (está en
+`.gitignore`), así que no llega a las apps consumidoras: cuando `npm
+install` clona este repo como dependencia git, sólo trae lo que está en
+git (sin ese `node_modules`), por lo que no hay riesgo de una segunda copia
+de React resolviéndose en runtime. Esto reemplaza el hack anterior de
+`turbopack.resolveAlias` que cada consumidor necesitaba cuando el paquete
+vivía como carpeta hermana fuera del repo (ver "Historia").
+
+## Historia — el enfoque de carpeta hermana (abandonado)
+
+Antes de convertir esto en su propio repo git, `dice3d-shared` vivía como
+carpeta hermana fuera de ambos repos (`D:\Programacion\Desarrollo\dice3d-shared`),
+consumida vía un path alias de TypeScript (`"dice3d-shared/*": ["../dice3d-shared/*"]`)
+más `turbopack.root` apuntando al directorio padre común. Funcionaba en
+desarrollo local, pero **rompía el build en Vercel**: Vercel sólo clona el
+repo que se pushea, nunca carpetas hermanas en el disco del que desarrolla,
+así que `dice3d-shared/*` no resolvía a nada en el build remoto. Se probó
+antes, sin éxito, una dependencia `file:../dice3d-shared` + `transpilePackages`
+(Turbopack no sigue un `file:` hacia una carpeta hermana aunque la junction
+de `node_modules` esté bien armada) — la solución real fue sacar el paquete
+de "carpeta hermana" del todo y darle un repo propio.
 
 ## Por qué existe
 
