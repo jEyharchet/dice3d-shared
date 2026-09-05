@@ -2,16 +2,13 @@
   "name": "dice3d-shared",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
-  "exports": {
-    ".": "./src/index.ts",
-    "./dice3dAdapter": "./src/dice3dAdapter.ts",
-    "./dicePresets": "./src/dicePresets.ts",
-    "./forcedNotation": "./src/forcedNotation.ts",
-    "./DiceRollOverlay": "./src/DiceRollOverlay.tsx"
-  },
+  "main": "./index.ts",
   "peerDependencies": {
     "react": ">=18",
     "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "react": "^19"
   }
 }
